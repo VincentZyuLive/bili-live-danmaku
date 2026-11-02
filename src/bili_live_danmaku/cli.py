@@ -3,10 +3,12 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 import sys
 import threading
 import webbrowser
 from pathlib import Path
+from types import FrameType
 
 import uvicorn
 
@@ -33,6 +35,27 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--verbose", action="store_true", help="输出详细服务日志")
     parser.add_argument("--version", action="version", version=__version__)
     return parser
+
+
+class GracefulServer(uvicorn.Server):
+    def __init__(self, config: uvicorn.Config) -> None:
+        super().__init__(config)
+        self._shutdown_notice_shown = False
+        self._force_notice_shown = False
+
+    def handle_exit(self, sig: int, frame: FrameType | None) -> None:
+        already_stopping = self.should_exit
+        super().handle_exit(sig, frame)
+        if already_stopping:
+            self.force_exit = True
+            if not self._force_notice_shown:
+                print("⚡ 再次收到退出信号，立即退出", flush=True)
+                print("👋 Bili Live Danmaku 已退出", flush=True)
+                self._force_notice_shown = True
+            os._exit(130)
+        if not self._shutdown_notice_shown:
+            print("🛑 收到退出信号，正在优雅关闭…", flush=True)
+            self._shutdown_notice_shown = True
 
 
 def _open_browser_later(port: int) -> None:
@@ -88,6 +111,9 @@ def main(argv: list[str] | None = None) -> int:
     if not 1 <= runtime.config.server.port <= 65535:
         raise SystemExit("server.port 必须在 1 到 65535 之间")
     logging.basicConfig(level=getattr(logging, runtime.config.logging.level, logging.INFO))
+    logging.getLogger("httpx").setLevel(
+        logging.INFO if args.verbose else logging.WARNING
+    )
     if not args.demo:
         cookie_error = asyncio.run(_validate_cookie(runtime))
         if cookie_error is not None:
@@ -97,11 +123,24 @@ def main(argv: list[str] | None = None) -> int:
     app = create_app(runtime)
     if not args.no_browser and runtime.config.server.open_browser:
         _open_browser_later(runtime.config.server.port)
-    uvicorn.run(
+    print("🎙️ Bili Live Danmaku 已启动", flush=True)
+    print(
+        f"🌐 控制台：http://{runtime.config.server.host}:{runtime.config.server.port}/admin",
+        flush=True,
+    )
+    config = uvicorn.Config(
         app,
         host=runtime.config.server.host,
         port=runtime.config.server.port,
         log_level="info" if args.verbose else "warning",
         access_log=args.verbose,
+        timeout_graceful_shutdown=2,
     )
+    server = GracefulServer(config)
+    try:
+        server.run()
+    except KeyboardInterrupt:
+        server.force_exit = True
+    finally:
+        print("👋 Bili Live Danmaku 已退出", flush=True)
     return 0

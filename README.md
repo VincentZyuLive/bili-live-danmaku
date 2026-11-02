@@ -9,7 +9,7 @@
 目前的开发和测试环境主要是 Windows 11 x64；项目按跨平台 PC 设计，其他平台尚未充分验证。
 
 > [!TIP]
-> 这是 VincentZyu 的自用版本，主要服务个人直播环境。项目仍在持续迭代，也欢迎体验、提交 Issue 或 PR。
+> 这是 VincentZyu 的自用软件，主要服务个人直播环境。项目仍在持续迭代，也欢迎体验、提交 Issue 或 PR。
 > 组织主页：[VincentZyuLive](https://github.com/VincentZyuLive)
 
 > 项目参考并移植了 [zlinux-live-util/pw-live-danmaku](https://github.com/zlinux-live-util/pw-live-danmaku) 的协议结论和交互设计。上游的 `pw` 指 PipeWire；本项目使用 OBS 浏览器源，不需要 PipeWire。
@@ -44,6 +44,8 @@ Windows 双击 `scripts/start-bili-live-danmaku.cmd` 可检查并启动 6161 服
 ```
 
 脚本会先检查服务是否已经运行；已运行时只打开 WebUI，未运行时启动服务。Windows 桌面快捷方式名称为 `Bili Live Danmaku`，关闭终端或控制台窗口即可停止服务。
+
+按一次 `Ctrl+C` 会显示 `🛑 收到退出信号，正在优雅关闭…` 并在最多 2 秒内关闭；连续按第二次会立即强制退出。正常结束时显示 `👋 Bili Live Danmaku 已退出`。
 
 所有参数都会原样传给 `bili-live-danmaku`；脚本额外识别 `--port` 来切换健康检查和 Admin 地址：
 

@@ -4,7 +4,6 @@ import asyncio
 import logging
 import re
 import shutil
-import subprocess
 import sys
 import tempfile
 import time
@@ -254,11 +253,11 @@ class _CombinedAudio:
     sample_width: int
 
 
-def _play_audio_files(paths: Sequence[Path]) -> None:
+def _combine_audio_files(paths: Sequence[Path]) -> _CombinedAudio | None:
     import miniaudio
 
     if not paths:
-        return
+        return None
 
     decoded_files: list[tuple[Path, Any]] = []
     for path in paths:
@@ -267,7 +266,7 @@ def _play_audio_files(paths: Sequence[Path]) -> None:
         except Exception:
             logger.exception("TTS 音频解码失败：%s", path)
     if not decoded_files:
-        return
+        return None
 
     first = decoded_files[0][1]
     samples = array(first.samples.typecode)
@@ -290,29 +289,29 @@ def _play_audio_files(paths: Sequence[Path]) -> None:
         samples.extend(decoded.samples)
 
     if not samples:
-        return
-    combined = _CombinedAudio(
+        return None
+    return _CombinedAudio(
         samples=samples,
         sample_rate=first.sample_rate,
         nchannels=first.nchannels,
         sample_width=first.sample_width,
     )
-    _play_combined_audio(combined)
 
 
-def _play_combined_audio(combined: _CombinedAudio) -> None:
+async def _play_combined_audio(combined: _CombinedAudio) -> None:
     if sys.platform.startswith("linux") and shutil.which("pw-play"):
         try:
-            _play_with_pw_play(combined)
+            await _play_with_pw_play(combined)
             return
         except Exception as exc:
             logger.warning("pw-play 播放失败，回退到 miniaudio：%s", exc)
-    _play_with_miniaudio(combined)
+    await asyncio.to_thread(_play_with_miniaudio, combined)
 
 
-def _play_with_pw_play(combined: _CombinedAudio) -> None:
+async def _play_with_pw_play(combined: _CombinedAudio) -> None:
     duration = len(combined.samples) / max(1, combined.sample_rate * combined.nchannels)
     temp_name = ""
+    process: asyncio.subprocess.Process | None = None
     try:
         with tempfile.NamedTemporaryFile(
             prefix="tts-playback-", suffix=".wav", delete=False
@@ -323,13 +322,34 @@ def _play_with_pw_play(combined: _CombinedAudio) -> None:
                 wav.setsampwidth(combined.sample_width)
                 wav.setframerate(combined.sample_rate)
                 wav.writeframes(combined.samples.tobytes())
-        subprocess.run(
-            ["pw-play", temp_name],
-            check=True,
-            timeout=max(10.0, duration + 5.0),
-            capture_output=True,
-            text=True,
+        process = await asyncio.create_subprocess_exec(
+            "pw-play",
+            temp_name,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
         )
+        try:
+            _, stderr = await asyncio.wait_for(
+                process.communicate(),
+                timeout=max(10.0, duration + 5.0),
+            )
+        except asyncio.CancelledError:
+            process.terminate()
+            try:
+                await asyncio.wait_for(process.wait(), timeout=1.0)
+            except TimeoutError:
+                process.kill()
+                await process.wait()
+            raise
+        except TimeoutError as exc:
+            process.kill()
+            await process.wait()
+            raise TTSPlaybackError("pw-play 播放超时") from exc
+        if process.returncode != 0:
+            detail = stderr.decode("utf-8", errors="replace").strip()
+            raise TTSPlaybackError(f"pw-play 退出码 {process.returncode}：{detail}")
+    except TTSPlaybackError:
+        raise
     except Exception as exc:
         raise TTSPlaybackError(f"pw-play 播放失败：{exc}") from exc
     finally:
@@ -479,7 +499,9 @@ class TTSService:
         return paths
 
     async def _play_files(self, paths: Sequence[Path]) -> None:
-        await asyncio.to_thread(_play_audio_files, paths)
+        combined = await asyncio.to_thread(_combine_audio_files, paths)
+        if combined is not None:
+            await _play_combined_audio(combined)
 
     async def _process_request(self, request: SpeechRequest) -> None:
         if self._should_use_multilingual_voice(request):
