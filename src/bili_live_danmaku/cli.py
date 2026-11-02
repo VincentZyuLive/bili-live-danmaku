@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 import sys
 import threading
 import webbrowser
@@ -49,8 +50,9 @@ class GracefulServer(uvicorn.Server):
             self.force_exit = True
             if not self._force_notice_shown:
                 print("⚡ 再次收到退出信号，立即退出", flush=True)
+                print("👋 Bili Live Danmaku 已退出", flush=True)
                 self._force_notice_shown = True
-            return
+            os._exit(130)
         if not self._shutdown_notice_shown:
             print("🛑 收到退出信号，正在优雅关闭…", flush=True)
             self._shutdown_notice_shown = True
@@ -132,7 +134,7 @@ def main(argv: list[str] | None = None) -> int:
         port=runtime.config.server.port,
         log_level="info" if args.verbose else "warning",
         access_log=args.verbose,
-        timeout_graceful_shutdown=3,
+        timeout_graceful_shutdown=2,
     )
     server = GracefulServer(config)
     try:

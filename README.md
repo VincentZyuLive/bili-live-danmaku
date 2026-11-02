@@ -45,7 +45,7 @@ Windows 双击 `scripts/start-bili-live-danmaku.cmd` 可检查并启动 6161 服
 
 脚本会先检查服务是否已经运行；已运行时只打开 WebUI，未运行时启动服务。Windows 桌面快捷方式名称为 `Bili Live Danmaku`，关闭终端或控制台窗口即可停止服务。
 
-按一次 `Ctrl+C` 会显示 `🛑 收到退出信号，正在优雅关闭…` 并在最多 3 秒内关闭；连续按第二次会立即强制退出。正常结束时显示 `👋 Bili Live Danmaku 已退出`。
+按一次 `Ctrl+C` 会显示 `🛑 收到退出信号，正在优雅关闭…` 并在最多 2 秒内关闭；连续按第二次会立即强制退出。正常结束时显示 `👋 Bili Live Danmaku 已退出`。
 
 所有参数都会原样传给 `bili-live-danmaku`；脚本额外识别 `--port` 来切换健康检查和 Admin 地址：
 
