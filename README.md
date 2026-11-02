@@ -178,7 +178,7 @@ data/fonts/          上传字体
 data/cache/          图片与 TTS 临时缓存
 ```
 
-0.3.2 使用配置 schema v3；旧 v2 配置会自动迁移，并继续使用项目内数据目录。0.2.0 起不再使用 `%LOCALAPPDATA%/bili-live-danmaku`。Cookie、历史和缓存不会提交到仓库。
+0.3.3 使用配置 schema v3；旧 v2 配置会自动迁移，并继续使用项目内数据目录。0.2.0 起不再使用 `%LOCALAPPDATA%/bili-live-danmaku`。Cookie、历史和缓存不会提交到仓库。
 
 ## 🛠️ 开发
 
