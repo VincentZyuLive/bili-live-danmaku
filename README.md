@@ -122,6 +122,8 @@ config/cookie.txt
 ```yaml
 tts:
   enabled: true
+  # Edge TTS 代理；留空表示直连
+  proxy: http://127.0.0.1:7890
   prefer_multilingual_voice: false
   multilingual_voice: en-US-AvaMultilingualNeural
   language_priority: [zh, en, ja, ko, es, fr, de, pt, ru, it]
@@ -147,6 +149,8 @@ tts:
 ```
 
 Edge TTS 使用系统默认音频设备播放。默认保留各语言专属音色：日文昵称使用日语声音，中文正文继续使用中文声音；全部片段会预生成并拼接为连续音频，不再在名字与正文之间等待下一段联网合成。开启“多语种优先”后才会把整句交给单个多语种音色。消息串行排队，队列满时丢弃最旧整条消息；单次朗读失败不会中断直播连接。启用后弹幕文字会发送给 Microsoft Edge TTS 服务。
+
+`tts.proxy` 默认使用 `http://127.0.0.1:7890`。如果 Edge TTS 服务在直连网络下可访问，可以将该项设为空字符串以关闭代理。
 
 ## ⌨️ 命令行
 

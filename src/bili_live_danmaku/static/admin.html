@@ -163,6 +163,11 @@
               <input id="ttsEnabled" data-path="tts.enabled" type="checkbox" />
               <span>启用 Edge TTS 弹幕朗读</span>
             </label>
+            <label class="field wide">
+              <span>TTS 代理</span>
+              <input id="ttsProxy" data-path="tts.proxy" type="text" spellcheck="false" placeholder="http://127.0.0.1:7890" />
+              <small>Edge TTS 网络请求使用的 HTTP/HTTPS 代理；留空表示直接连接。</small>
+            </label>
             <label class="switch-row">
               <input id="ttsPreferMultilingual" data-path="tts.prefer_multilingual_voice" type="checkbox" />
               <span>混合语言优先使用单个多语种音色</span>
