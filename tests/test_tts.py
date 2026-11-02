@@ -1,4 +1,5 @@
 import asyncio
+import wave
 from array import array
 from pathlib import Path
 
@@ -10,7 +11,9 @@ from bili_live_danmaku.tts import (
     SpeechRequest,
     SpeechSegment,
     TTSService,
+    _CombinedAudio,
     _play_audio_files,
+    _play_combined_audio,
     detect_language,
     message_to_speech,
     message_to_speech_segments,
@@ -282,8 +285,71 @@ def test_combined_audio_has_no_inserted_silence(monkeypatch, tmp_path: Path) -> 
     monkeypatch.setattr(miniaudio, "decode_file", lambda path: decoded[path])
     monkeypatch.setattr(miniaudio, "PlaybackDevice", Device)
     monkeypatch.setattr(tts_module.time, "sleep", sleeps.append)
+    monkeypatch.setattr(tts_module.sys, "platform", "win32")
 
     _play_audio_files([tmp_path / "a.mp3", tmp_path / "b.mp3"])
 
     assert Device.instances == 1
     assert sleeps == [0.085]
+
+
+def test_pw_play_writes_temporary_wav_and_cleans_it(monkeypatch) -> None:
+    combined = _CombinedAudio(
+        samples=array("h", [100, -100, 200, -200]),
+        sample_rate=8000,
+        nchannels=1,
+        sample_width=2,
+    )
+    captured: dict[str, object] = {}
+
+    def fake_run(command: list[str], **kwargs: object) -> None:
+        path = Path(command[1])
+        with wave.open(str(path), "rb") as wav:
+            captured.update(
+                backend=command[0],
+                channels=wav.getnchannels(),
+                sample_width=wav.getsampwidth(),
+                sample_rate=wav.getframerate(),
+                frames=wav.readframes(wav.getnframes()),
+                path=path,
+                kwargs=kwargs,
+            )
+
+    monkeypatch.setattr(tts_module.sys, "platform", "linux")
+    monkeypatch.setattr(tts_module.shutil, "which", lambda _name: "/usr/bin/pw-play")
+    monkeypatch.setattr(tts_module.subprocess, "run", fake_run)
+
+    _play_combined_audio(combined)
+
+    assert captured["backend"] == "pw-play"
+    assert captured["channels"] == 1
+    assert captured["sample_width"] == 2
+    assert captured["sample_rate"] == 8000
+    assert captured["frames"] == combined.samples.tobytes()
+    assert not Path(captured["path"]).exists()
+
+
+def test_pw_play_failure_falls_back_to_miniaudio(monkeypatch) -> None:
+    combined = _CombinedAudio(
+        samples=array("h", [1, 2]),
+        sample_rate=8000,
+        nchannels=1,
+        sample_width=2,
+    )
+    calls: list[str] = []
+
+    def fail_pw_play(_combined: _CombinedAudio) -> None:
+        calls.append("pw-play")
+        raise RuntimeError("pw-play unavailable")
+
+    def fake_miniaudio(_combined: _CombinedAudio) -> None:
+        calls.append("miniaudio")
+
+    monkeypatch.setattr(tts_module.sys, "platform", "linux")
+    monkeypatch.setattr(tts_module.shutil, "which", lambda _name: "/usr/bin/pw-play")
+    monkeypatch.setattr(tts_module, "_play_with_pw_play", fail_pw_play)
+    monkeypatch.setattr(tts_module, "_play_with_miniaudio", fake_miniaudio)
+
+    _play_combined_audio(combined)
+
+    assert calls == ["pw-play", "miniaudio"]

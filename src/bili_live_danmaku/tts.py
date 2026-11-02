@@ -3,8 +3,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import shutil
+import subprocess
+import sys
+import tempfile
 import time
 import uuid
+import wave
 from array import array
 from collections import deque
 from collections.abc import Generator, Sequence
@@ -30,6 +35,10 @@ DEFAULT_LANGUAGE_PRIORITY = ("zh", "en", "ja", "ko", "es", "fr", "de", "pt", "ru
 
 _MIN_CONFIDENCE = 0.25
 _TIE_MARGIN = 0.12
+
+
+class TTSPlaybackError(RuntimeError):
+    """Raised when synthesized speech cannot be played on the local audio system."""
 
 
 @dataclass(frozen=True)
@@ -288,15 +297,63 @@ def _play_audio_files(paths: Sequence[Path]) -> None:
         nchannels=first.nchannels,
         sample_width=first.sample_width,
     )
-    device = miniaudio.PlaybackDevice()
+    _play_combined_audio(combined)
+
+
+def _play_combined_audio(combined: _CombinedAudio) -> None:
+    if sys.platform.startswith("linux") and shutil.which("pw-play"):
+        try:
+            _play_with_pw_play(combined)
+            return
+        except Exception as exc:
+            logger.warning("pw-play 播放失败，回退到 miniaudio：%s", exc)
+    _play_with_miniaudio(combined)
+
+
+def _play_with_pw_play(combined: _CombinedAudio) -> None:
+    duration = len(combined.samples) / max(1, combined.sample_rate * combined.nchannels)
+    temp_name = ""
     try:
-        stream = _pcm_chunks(combined)
-        next(stream)
-        device.start(stream)
-        duration = len(combined.samples) / max(1, combined.sample_rate * combined.nchannels)
-        time.sleep(duration + 0.08)
+        with tempfile.NamedTemporaryFile(
+            prefix="tts-playback-", suffix=".wav", delete=False
+        ) as raw:
+            temp_name = raw.name
+            with wave.open(raw, "wb") as wav:
+                wav.setnchannels(combined.nchannels)
+                wav.setsampwidth(combined.sample_width)
+                wav.setframerate(combined.sample_rate)
+                wav.writeframes(combined.samples.tobytes())
+        subprocess.run(
+            ["pw-play", temp_name],
+            check=True,
+            timeout=max(10.0, duration + 5.0),
+            capture_output=True,
+            text=True,
+        )
+    except Exception as exc:
+        raise TTSPlaybackError(f"pw-play 播放失败：{exc}") from exc
     finally:
-        device.close()
+        if temp_name:
+            Path(temp_name).unlink(missing_ok=True)
+
+
+def _play_with_miniaudio(combined: _CombinedAudio) -> None:
+    import miniaudio
+
+    try:
+        device = miniaudio.PlaybackDevice()
+        try:
+            stream = _pcm_chunks(combined)
+            next(stream)
+            device.start(stream)
+            duration = len(combined.samples) / max(
+                1, combined.sample_rate * combined.nchannels
+            )
+            time.sleep(duration + 0.08)
+        finally:
+            device.close()
+    except Exception as exc:
+        raise TTSPlaybackError(f"miniaudio 播放失败：{exc}") from exc
 
 
 class TTSService:

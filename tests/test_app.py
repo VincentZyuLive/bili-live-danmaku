@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 import bili_live_danmaku.app as app_module
 from bili_live_danmaku.app import Runtime, create_app, demo_messages
 from bili_live_danmaku.config import ConfigStore
+from bili_live_danmaku.tts import TTSPlaybackError
 
 
 def test_api_and_pages_smoke(tmp_path: Path) -> None:
@@ -103,6 +104,21 @@ def test_demo_messages_include_local_avatars_and_varied_kinds() -> None:
         for message in messages
     )
     assert len({message.kind for message in messages}) >= 5
+
+
+def test_tts_playback_error_returns_503(tmp_path: Path, monkeypatch) -> None:
+    runtime = Runtime(ConfigStore(tmp_path), demo=True)
+    runtime.config.tts.enabled = True
+
+    async def fail_playback(*_args: object, **_kwargs: object) -> None:
+        raise TTSPlaybackError("audio device unavailable")
+
+    monkeypatch.setattr(runtime.tts, "speak_test", fail_playback)
+    app = create_app(runtime)
+    with TestClient(app) as client:
+        response = client.post("/api/tts/test", json={"text": "测试", "language": "zh"})
+        assert response.status_code == 503
+        assert "PipeWire/PulseAudio" in response.json()["detail"]
 
 
 def test_config_document_api_validation_save_and_conflict(tmp_path: Path) -> None:
