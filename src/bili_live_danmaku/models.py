@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 from typing import Annotated, Literal, cast
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -117,6 +118,7 @@ class TTSVoices(BaseModel):
 
 class TTSSettings(BaseModel):
     enabled: bool = False
+    proxy: str = "http://127.0.0.1:7890"
     prefer_multilingual_voice: bool = False
     multilingual_voice: str = "en-US-AvaMultilingualNeural"
     language_priority: list[str] = Field(default_factory=lambda: list(TTS_LANGUAGE_CODES))
@@ -129,6 +131,21 @@ class TTSSettings(BaseModel):
     max_chars: int = Field(default=180, ge=1, le=1000)
     queue_size: int = Field(default=32, ge=1, le=500)
     min_interval_ms: int = Field(default=300, ge=0, le=10_000)
+
+    @field_validator("proxy")
+    @classmethod
+    def validate_proxy(cls, value: str) -> str:
+        proxy = value.strip()
+        if not proxy:
+            return ""
+        parsed = urlsplit(proxy)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise ValueError("tts.proxy 必须是 http:// 或 https:// URL，留空表示直连")
+        try:
+            _ = parsed.port
+        except ValueError as exc:
+            raise ValueError("tts.proxy 端口无效") from exc
+        return proxy
 
     @field_validator("language_priority")
     @classmethod

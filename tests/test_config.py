@@ -4,8 +4,11 @@ import json
 import shutil
 from pathlib import Path
 
+import pytest
+from pydantic import ValidationError
+
 from bili_live_danmaku.config import ConfigStore
-from bili_live_danmaku.models import AppConfig
+from bili_live_danmaku.models import AppConfig, TTSSettings
 
 
 def test_default_config_uses_local_cookie_file(tmp_path: Path) -> None:
@@ -17,6 +20,17 @@ def test_default_config_uses_local_cookie_file(tmp_path: Path) -> None:
     assert store.path == tmp_path / "config" / "config.yaml"
     assert store.path.exists()
     assert config.version == 3
+
+
+def test_tts_proxy_defaults_and_validation() -> None:
+    assert TTSSettings().proxy == "http://127.0.0.1:7890"
+    assert TTSSettings(proxy="").proxy == ""
+    assert TTSSettings(proxy="https://proxy.example:8443").proxy == "https://proxy.example:8443"
+
+    with pytest.raises(ValidationError):
+        TTSSettings(proxy="socks5://127.0.0.1:7890")
+    with pytest.raises(ValidationError):
+        TTSSettings(proxy="http://")
 
 
 def test_config_round_trip(tmp_path: Path) -> None:

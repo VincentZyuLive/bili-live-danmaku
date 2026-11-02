@@ -17,7 +17,9 @@ def test_api_and_pages_smoke(tmp_path: Path) -> None:
     with TestClient(app) as client:
         assert client.get("/admin").status_code == 200
         assert client.get("/overlay").status_code == 200
-        assert "Bili Live Danmaku" in client.get("/admin").text
+        admin_page = client.get("/admin").text
+        assert "Bili Live Danmaku" in admin_page
+        assert 'id="ttsProxy"' in admin_page
 
         config = client.get("/api/config").json()
         config["auto_connect"] = False
@@ -41,6 +43,47 @@ def test_api_and_pages_smoke(tmp_path: Path) -> None:
             snapshot = websocket.receive_json()
             assert snapshot["type"] == "snapshot"
             assert "config" in snapshot["payload"]
+
+
+async def test_tts_voice_cache_is_scoped_by_proxy(monkeypatch) -> None:
+    import edge_tts
+
+    calls: list[str | None] = []
+
+    async def fake_list_voices(*, proxy: str | None = None) -> list[dict[str, str]]:
+        calls.append(proxy)
+        return [
+            {
+                "ShortName": "zh-CN-XiaoxiaoNeural",
+                "Locale": "zh-CN",
+                "Gender": "Female",
+                "FriendlyName": "Xiaoxiao",
+            }
+        ]
+
+    monkeypatch.setattr(edge_tts, "list_voices", fake_list_voices)
+    app_module._TTS_VOICE_CACHE.clear()
+
+    await app_module._list_tts_voices("http://127.0.0.1:7890")
+    await app_module._list_tts_voices("http://127.0.0.1:7890")
+    await app_module._list_tts_voices("")
+
+    assert calls == ["http://127.0.0.1:7890", None]
+
+
+def test_tts_test_network_error_returns_502(tmp_path: Path, monkeypatch) -> None:
+    runtime = Runtime(ConfigStore(tmp_path), demo=True)
+    runtime.config.tts.enabled = True
+
+    async def fail_test(*_args: object, **_kwargs: object) -> None:
+        raise TimeoutError("speech service timed out")
+
+    monkeypatch.setattr(runtime.tts, "speak_test", fail_test)
+    app = create_app(runtime)
+    with TestClient(app) as client:
+        response = client.post("/api/tts/test", json={"text": "测试", "language": "zh"})
+        assert response.status_code == 502
+        assert "tts.proxy" in response.json()["detail"]
 
 
 def test_status_never_returns_cookie_value(tmp_path: Path) -> None:

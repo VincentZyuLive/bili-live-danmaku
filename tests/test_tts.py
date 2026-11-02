@@ -124,6 +124,28 @@ def test_event_specific_speech_templates() -> None:
     assert message_to_speech(paid, True, 100) == "VincentZyu发送了一条醒目留言：晚上好，金额 30 元"
 
 
+async def test_edge_tts_communicate_receives_proxy(tmp_path: Path, monkeypatch) -> None:
+    import edge_tts
+
+    captured: dict[str, object] = {}
+
+    class FakeCommunicate:
+        def __init__(self, text: str, voice: str, **kwargs: object) -> None:
+            captured.update(text=text, voice=voice, **kwargs)
+
+        async def save(self, path: str) -> None:
+            Path(path).write_bytes(b"fake mp3")
+
+    monkeypatch.setattr(edge_tts, "Communicate", FakeCommunicate)
+    service = TTSService(
+        TTSSettings(enabled=True, proxy="http://127.0.0.1:7890"),
+        tmp_path,
+    )
+    path = await service._synthesize_to_file("测试", "zh-CN-XiaoxiaoNeural")
+    assert captured["proxy"] == "http://127.0.0.1:7890"
+    assert path.read_bytes() == b"fake mp3"
+
+
 async def test_mixed_language_prefers_multilingual_single_request(
     tmp_path: Path, monkeypatch
 ) -> None:

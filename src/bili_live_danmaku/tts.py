@@ -386,6 +386,7 @@ class TTSService:
                 rate=self.settings.rate,
                 volume=self.settings.volume,
                 pitch=self.settings.pitch,
+                proxy=self.settings.proxy or None,
             )
             await communicate.save(str(audio_path))
             return audio_path

@@ -35,7 +35,8 @@ from .tts import TTSService
 STATIC_DIR = Path(__file__).parent / "static"
 CONFIG_WATCH_INTERVAL_SECONDS = 1.0
 
-_TTS_VOICE_CACHE: list[dict[str, str]] | None = None
+logger = logging.getLogger(__name__)
+_TTS_VOICE_CACHE: dict[str | None, list[dict[str, str]]] = {}
 _TTS_VOICE_LOCK = asyncio.Lock()
 _TTS_VOICE_LOCALES = {
     "zh": "zh-CN",
@@ -65,20 +66,22 @@ def _fallback_tts_voices() -> list[dict[str, str]]:
     ]
 
 
-async def _list_tts_voices() -> tuple[list[dict[str, str]], bool]:
-    global _TTS_VOICE_CACHE
-    if _TTS_VOICE_CACHE is not None:
-        return _TTS_VOICE_CACHE, False
+async def _list_tts_voices(proxy: str | None = None) -> tuple[list[dict[str, str]], bool]:
+    proxy_key = proxy or None
+    cached = _TTS_VOICE_CACHE.get(proxy_key)
+    if cached is not None:
+        return cached, False
     async with _TTS_VOICE_LOCK:
-        if _TTS_VOICE_CACHE is not None:
-            return _TTS_VOICE_CACHE, False
+        cached = _TTS_VOICE_CACHE.get(proxy_key)
+        if cached is not None:
+            return cached, False
         try:
             import edge_tts
 
-            voices = await edge_tts.list_voices()
+            voices = await edge_tts.list_voices(proxy=proxy_key)
         except Exception:
             return _fallback_tts_voices(), True
-        _TTS_VOICE_CACHE = sorted(
+        _TTS_VOICE_CACHE[proxy_key] = sorted(
             [
                 {
                     "short_name": voice["ShortName"],
@@ -91,7 +94,7 @@ async def _list_tts_voices() -> tuple[list[dict[str, str]], bool]:
             ],
             key=lambda voice: (voice["locale"], voice["short_name"]),
         )
-        return _TTS_VOICE_CACHE, False
+        return _TTS_VOICE_CACHE[proxy_key], False
 
 
 class CookiePayload(BaseModel):
@@ -726,7 +729,7 @@ def create_app(runtime: Runtime) -> FastAPI:
 
     @app.get("/api/tts/voices")
     async def list_tts_voices() -> dict[str, object]:
-        voices, offline = await _list_tts_voices()
+        voices, offline = await _list_tts_voices(runtime.config.tts.proxy or None)
         return {"voices": voices, "offline": offline}
 
     @app.post("/api/tts/test")
@@ -738,6 +741,12 @@ def create_app(runtime: Runtime) -> FastAPI:
             await runtime.tts.speak_test(request.text, request.language)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except Exception as exc:
+            logger.exception("Edge TTS 测试失败")
+            raise HTTPException(
+                status_code=502,
+                detail="Edge TTS 请求失败，请检查 tts.proxy 或网络连接",
+            ) from exc
         return {"ok": True}
 
     @app.get("/api/fonts")
