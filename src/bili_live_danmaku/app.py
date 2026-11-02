@@ -30,7 +30,7 @@ from .models import (
     TTSVoices,
     UserType,
 )
-from .tts import TTSService
+from .tts import TTSPlaybackError, TTSService
 
 STATIC_DIR = Path(__file__).parent / "static"
 CONFIG_WATCH_INTERVAL_SECONDS = 1.0
@@ -741,11 +741,17 @@ def create_app(runtime: Runtime) -> FastAPI:
             await runtime.tts.speak_test(request.text, request.language)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except TTSPlaybackError as exc:
+            logger.exception("TTS 音频播放失败")
+            raise HTTPException(
+                status_code=503,
+                detail="TTS 音频播放失败，请检查 PipeWire/PulseAudio 和默认输出设备",
+            ) from exc
         except Exception as exc:
-            logger.exception("Edge TTS 测试失败")
+            logger.exception("Edge TTS 合成失败")
             raise HTTPException(
                 status_code=502,
-                detail="Edge TTS 请求失败，请检查 tts.proxy 或网络连接",
+                detail="Edge TTS 合成失败，请检查 tts.proxy 或网络连接",
             ) from exc
         return {"ok": True}
 

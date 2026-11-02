@@ -152,6 +152,8 @@ Edge TTS 使用系统默认音频设备播放。默认保留各语言专属音�
 
 `tts.proxy` 默认使用 `http://127.0.0.1:7890`。如果 Edge TTS 服务在直连网络下可访问，可以将该项设为空字符串以关闭代理。
 
+Linux 上如果检测到 `pw-play`，TTS 会优先将组合后的音频写入临时 WAV 并通过 PipeWire 播放；`pw-play` 不可用或播放失败时自动回退到 `miniaudio`。系统需要存在可用的 PipeWire/PulseAudio 默认输出设备。
+
 ## ⌨️ 命令行
 
 ```text
