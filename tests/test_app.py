@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import shutil
 import time
 from pathlib import Path
@@ -10,6 +11,20 @@ import bili_live_danmaku.app as app_module
 from bili_live_danmaku.app import Runtime, create_app, demo_messages
 from bili_live_danmaku.config import ConfigStore
 from bili_live_danmaku.tts import TTSPlaybackError
+
+
+async def test_runtime_stop_has_timeout(tmp_path: Path, monkeypatch) -> None:
+    runtime = Runtime(ConfigStore(tmp_path), demo=True)
+
+    async def never_finishes() -> None:
+        await asyncio.sleep(10)
+
+    monkeypatch.setattr(runtime.tts, "stop", never_finishes)
+    monkeypatch.setattr(app_module, "SHUTDOWN_TIMEOUT_SECONDS", 0.05)
+
+    started = time.monotonic()
+    await runtime.stop()
+    assert time.monotonic() - started < 1.0
 
 
 def test_api_and_pages_smoke(tmp_path: Path) -> None:

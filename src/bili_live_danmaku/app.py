@@ -34,6 +34,7 @@ from .tts import TTSPlaybackError, TTSService
 
 STATIC_DIR = Path(__file__).parent / "static"
 CONFIG_WATCH_INTERVAL_SECONDS = 1.0
+SHUTDOWN_TIMEOUT_SECONDS = 5.0
 
 logger = logging.getLogger(__name__)
 _TTS_VOICE_CACHE: dict[str | None, list[dict[str, str]]] = {}
@@ -226,6 +227,20 @@ class Runtime:
 
     async def stop(self) -> None:
         self._stopped.set()
+        try:
+            await asyncio.wait_for(
+                self._stop_components(),
+                timeout=SHUTDOWN_TIMEOUT_SECONDS,
+            )
+        except TimeoutError:
+            logger.warning(
+                "服务关闭超过 %.0f 秒，已停止等待后台任务",
+                SHUTDOWN_TIMEOUT_SECONDS,
+            )
+        except Exception as exc:
+            logger.warning("服务清理时出错：%s", exc)
+
+    async def _stop_components(self) -> None:
         if self._demo_task is not None:
             self._demo_task.cancel()
             await asyncio.gather(self._demo_task, return_exceptions=True)

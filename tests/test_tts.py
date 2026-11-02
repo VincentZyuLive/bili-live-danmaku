@@ -4,6 +4,7 @@ from array import array
 from pathlib import Path
 
 import miniaudio
+import pytest
 
 import bili_live_danmaku.tts as tts_module
 from bili_live_danmaku.models import ChatMessage, Fragment, MessageKind, TTSSettings
@@ -11,9 +12,10 @@ from bili_live_danmaku.tts import (
     SpeechRequest,
     SpeechSegment,
     TTSService,
+    _combine_audio_files,
     _CombinedAudio,
-    _play_audio_files,
     _play_combined_audio,
+    _play_with_pw_play,
     detect_language,
     message_to_speech,
     message_to_speech_segments,
@@ -265,35 +267,19 @@ def test_combined_audio_has_no_inserted_silence(monkeypatch, tmp_path: Path) -> 
             self.nchannels = 1
             self.sample_width = 2
 
-    class Device:
-        instances = 0
-
-        def __init__(self) -> None:
-            Device.instances += 1
-
-        def start(self, stream: object) -> None:
-            self.stream = stream
-
-        def close(self) -> None:
-            pass
-
     decoded = {
         str(tmp_path / "a.mp3"): Decoded(samples_a),
         str(tmp_path / "b.mp3"): Decoded(samples_b),
     }
-    sleeps: list[float] = []
     monkeypatch.setattr(miniaudio, "decode_file", lambda path: decoded[path])
-    monkeypatch.setattr(miniaudio, "PlaybackDevice", Device)
-    monkeypatch.setattr(tts_module.time, "sleep", sleeps.append)
-    monkeypatch.setattr(tts_module.sys, "platform", "win32")
 
-    _play_audio_files([tmp_path / "a.mp3", tmp_path / "b.mp3"])
+    combined = _combine_audio_files([tmp_path / "a.mp3", tmp_path / "b.mp3"])
 
-    assert Device.instances == 1
-    assert sleeps == [0.085]
+    assert combined is not None
+    assert list(combined.samples) == [100, 200, 300, 400, 500]
 
 
-def test_pw_play_writes_temporary_wav_and_cleans_it(monkeypatch) -> None:
+async def test_pw_play_writes_temporary_wav_and_cleans_it(monkeypatch) -> None:
     combined = _CombinedAudio(
         samples=array("h", [100, -100, 200, -200]),
         sample_rate=8000,
@@ -302,34 +288,40 @@ def test_pw_play_writes_temporary_wav_and_cleans_it(monkeypatch) -> None:
     )
     captured: dict[str, object] = {}
 
-    def fake_run(command: list[str], **kwargs: object) -> None:
-        path = Path(command[1])
-        with wave.open(str(path), "rb") as wav:
-            captured.update(
-                backend=command[0],
-                channels=wav.getnchannels(),
-                sample_width=wav.getsampwidth(),
-                sample_rate=wav.getframerate(),
-                frames=wav.readframes(wav.getnframes()),
-                path=path,
-                kwargs=kwargs,
-            )
+    class FakeProcess:
+        returncode = 0
+
+        async def communicate(self) -> tuple[bytes, bytes]:
+            path = Path(captured["path"])
+            with wave.open(str(path), "rb") as wav:
+                captured.update(
+                    channels=wav.getnchannels(),
+                    sample_width=wav.getsampwidth(),
+                    sample_rate=wav.getframerate(),
+                    frames=wav.readframes(wav.getnframes()),
+                )
+            return b"", b""
+
+    async def fake_create(command: str, *args: str, **kwargs: object) -> FakeProcess:
+        captured.update(backend=command, path=args[0], kwargs=kwargs)
+        return FakeProcess()
 
     monkeypatch.setattr(tts_module.sys, "platform", "linux")
     monkeypatch.setattr(tts_module.shutil, "which", lambda _name: "/usr/bin/pw-play")
-    monkeypatch.setattr(tts_module.subprocess, "run", fake_run)
+    monkeypatch.setattr(tts_module.asyncio, "create_subprocess_exec", fake_create)
 
-    _play_combined_audio(combined)
+    await _play_with_pw_play(combined)
 
+    path = Path(captured["path"])
     assert captured["backend"] == "pw-play"
     assert captured["channels"] == 1
     assert captured["sample_width"] == 2
     assert captured["sample_rate"] == 8000
     assert captured["frames"] == combined.samples.tobytes()
-    assert not Path(captured["path"]).exists()
+    assert not path.exists()
 
 
-def test_pw_play_failure_falls_back_to_miniaudio(monkeypatch) -> None:
+async def test_pw_play_failure_falls_back_to_miniaudio(monkeypatch) -> None:
     combined = _CombinedAudio(
         samples=array("h", [1, 2]),
         sample_rate=8000,
@@ -338,7 +330,7 @@ def test_pw_play_failure_falls_back_to_miniaudio(monkeypatch) -> None:
     )
     calls: list[str] = []
 
-    def fail_pw_play(_combined: _CombinedAudio) -> None:
+    async def fail_pw_play(_combined: _CombinedAudio) -> None:
         calls.append("pw-play")
         raise RuntimeError("pw-play unavailable")
 
@@ -350,6 +342,49 @@ def test_pw_play_failure_falls_back_to_miniaudio(monkeypatch) -> None:
     monkeypatch.setattr(tts_module, "_play_with_pw_play", fail_pw_play)
     monkeypatch.setattr(tts_module, "_play_with_miniaudio", fake_miniaudio)
 
-    _play_combined_audio(combined)
+    await _play_combined_audio(combined)
 
     assert calls == ["pw-play", "miniaudio"]
+
+
+async def test_canceling_pw_play_terminates_process(monkeypatch) -> None:
+    combined = _CombinedAudio(
+        samples=array("h", [1, 2]),
+        sample_rate=8000,
+        nchannels=1,
+        sample_width=2,
+    )
+    events: list[str] = []
+
+    class FakeProcess:
+        returncode = None
+
+        async def communicate(self) -> tuple[bytes, bytes]:
+            await asyncio.Event().wait()
+            return b"", b""
+
+        def terminate(self) -> None:
+            events.append("terminate")
+            self.returncode = -15
+
+        def kill(self) -> None:
+            events.append("kill")
+            self.returncode = -9
+
+        async def wait(self) -> int:
+            events.append("wait")
+            return self.returncode or 0
+
+    async def fake_create(_command: str, *_args: str, **_kwargs: object) -> FakeProcess:
+        return FakeProcess()
+
+    monkeypatch.setattr(tts_module.shutil, "which", lambda _name: "/usr/bin/pw-play")
+    monkeypatch.setattr(tts_module.asyncio, "create_subprocess_exec", fake_create)
+
+    task = asyncio.create_task(_play_with_pw_play(combined))
+    await asyncio.sleep(0)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert events == ["terminate", "wait"]
